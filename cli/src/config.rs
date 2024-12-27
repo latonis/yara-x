@@ -1,21 +1,13 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use yara_x::config::MetaValueType;
+
 use figment::{
     providers::{Format, Serialized, Toml},
     Figment,
 };
 use serde::{Deserialize, Serialize};
-
-/// Types allowed in the required_metadata table of the config file. Used to
-/// require specific metadata identifiers have specific types by "yr fmt".
-#[derive(strum_macros::Display, Deserialize, Serialize, Debug)]
-pub enum MetaValueType {
-    String,
-    Integer,
-    Float,
-    Bool,
-}
 
 /// Configuration structure for "yr" commands.
 #[derive(Deserialize, Serialize, Debug)]

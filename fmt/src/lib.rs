@@ -23,6 +23,7 @@ use thiserror::Error;
 
 use tokens::Token::*;
 use tokens::TokenStream;
+use yara_x::config::MetaValueType;
 use yara_x_parser::ast::{MetaValue, AST};
 use yara_x_parser::cst::SyntaxKind;
 use yara_x_parser::Parser;

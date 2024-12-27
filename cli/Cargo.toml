@@ -63,6 +63,6 @@ colored_json = "5.0.0"
 crossbeam = "0.8.4"
 crossterm = "0.28.1"
 encoding_rs = "0.8.35"
-strum_macros = "0.26.4"
+strum_macros = { workspace = true }
 superconsole = "0.2.0"
 wild = "2.2.1"

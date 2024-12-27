@@ -99,6 +99,26 @@ pub mod warnings {
     pub use crate::compiler::warnings::*;
 }
 
+/// Shared config types utilized by the formatter and CLI
+pub mod config {
+    use serde::Deserialize;
+    use serde::Serialize;
+
+    /// Types allowed in the required_metadata table of the config file. Used to
+    /// require specific metadata identifiers have specific types by "yr fmt".
+    #[derive(strum_macros::Display, Deserialize, Serialize, Debug)]
+    pub enum MetaValueType {
+        /// Represents a String type
+        String,
+        /// Represents an Integer type
+        Integer,
+        /// Represents a Float type
+        Float,
+        /// Represents a Boolean type
+        Bool,
+    }
+}
+
 mod utils {
     /// Tries to match `target` as the enum variant `pat`. Returns the
     /// inner value contained in the variant, or panics if `target` does
