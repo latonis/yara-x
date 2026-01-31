@@ -1,0 +1,11 @@
+is_eml: true
+headers:
+  - key: "From"
+    value: "sender@gmail.com"
+  - key: "To"
+    value: "user@gmail.com"
+  - key: "Subject"
+    value: "test"
+  - key: "Date"
+    value: "Sun, 8 Jan 2017 20:37:44 +0200"
+body: "Hello world!"

@@ -159,6 +159,9 @@ elf-module = [
     "dep:md-5",
 ]
 
+# The `eml` module parses EML files.
+eml-module = []
+
 # The `hash` module provides functions for computing md5, sha1, sha-256,
 # crc32 and checksum.
 hash-module = [
@@ -229,6 +232,7 @@ default-modules = [
     "dex-module",
     "dotnet-module",
     "elf-module",
+    "eml-module",
     "macho-module",
     "math-module",
     "hash-module",
