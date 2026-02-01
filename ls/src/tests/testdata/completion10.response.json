@@ -30,6 +30,11 @@
     "preselect": true
   },
   {
+    "label": "eml",
+    "kind": 9,
+    "preselect": true
+  },
+  {
     "label": "hash",
     "kind": 9,
     "preselect": true
