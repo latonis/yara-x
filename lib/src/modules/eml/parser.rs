@@ -28,37 +28,14 @@ impl EmlParser {
         input: &'a [u8],
     ) -> Result<Eml, Err<nom::error::Error<&'a [u8]>>> {
         self.result.is_eml = Some(true);
-        let boundary = input.find("\n\n").or_else(|| input.find("\r\n\r\n"));
 
-        let (header_part, body) = match boundary {
-            Some(pos) => {
-                let offset = if input[pos] == b'\r' { 4 } else { 2 };
-                (&input[..pos], &input[pos + offset..])
-            }
-            None => (input, &[][..]),
-        };
+        let (top_header, body) = self.split_message(input);
 
-        let mut last_key: Option<&[u8]> = None;
-        let mut headers = IndexMap::<&[u8], Vec<u8>>::new();
+        // stack for processing
+        // let mut stack: Vec<&[u8]> = vec![input];
+        // while let Some(current_data) = stack.pop() {}
 
-        for line in header_part.lines() {
-            if line.starts_with(b" ") || line.starts_with(b"\t") {
-                // multiline value
-                // we need to append to the previous value here
-                if let Some(last_key) = last_key {
-                    if let Some(value) = headers.get_mut(last_key) {
-                        value.push(b' ');
-                        value.extend_from_slice(line.trim());
-                    }
-                }
-            } else if let Some((key, value)) = line.split_once_str(":") {
-                // new key:value pair
-                let key_trimmed = key.trim();
-
-                headers.insert(key_trimmed, value.trim().to_vec());
-                last_key = Some(key_trimmed);
-            }
-        }
+        let headers = self.parse_headers(top_header);
 
         for (key, value) in &headers {
             self.result.headers.push(Header {
@@ -79,7 +56,15 @@ impl EmlParser {
                     let remainder = content_type[start..].trim();
 
                     // value could be "value" or value
-                    // deal with that here
+                    let boundary_bytes = if remainder.starts_with(b"\"") {
+                        // enclosed by ""
+                        remainder.split_str("\"").nth(1).unwrap_or(&[])
+                    } else {
+                        // no quotes but may be multiple items in here, split and grab 0th
+                        remainder.split_str(";").next().unwrap_or(&[]).trim()
+                    };
+
+                    dbg!(boundary_bytes.to_str_lossy());
                 }
             }
         }
@@ -104,5 +89,44 @@ impl EmlParser {
         }
 
         Ok(mem::take(&mut self.result))
+    }
+
+    fn split_message<'a>(&self, input: &'a [u8]) -> (&'a [u8], &'a [u8]) {
+        if let Some(pos) = input.find("\r\n\r\n") {
+            (&input[..pos], &input[pos + 4..])
+        } else if let Some(pos) = input.find("\n\n") {
+            (&input[..pos], &input[pos + 2..])
+        } else {
+            (input, &[][..])
+        }
+    }
+
+    fn parse_headers<'a>(
+        &self,
+        headers_raw: &'a [u8],
+    ) -> IndexMap<&'a [u8], Vec<u8>> {
+        let mut last_key: Option<&[u8]> = None;
+        let mut headers = IndexMap::<&[u8], Vec<u8>>::new();
+
+        for line in headers_raw.lines() {
+            if line.starts_with(b" ") || line.starts_with(b"\t") {
+                // multiline value
+                // we need to append to the previous value here
+                if let Some(last_key) = last_key {
+                    if let Some(value) = headers.get_mut(last_key) {
+                        value.push(b' ');
+                        value.extend_from_slice(line.trim());
+                    }
+                }
+            } else if let Some((key, value)) = line.split_once_str(":") {
+                // new key:value pair
+                let key_trimmed = key.trim();
+
+                headers.insert(key_trimmed, value.trim().to_vec());
+                last_key = Some(key_trimmed);
+            }
+        }
+
+        headers
     }
 }
