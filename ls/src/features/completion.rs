@@ -1,10 +1,12 @@
 use async_lsp::lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionItemLabelDetails,
-    InsertTextFormat, InsertTextMode, Position,
+    CompletionContext, CompletionItem, CompletionItemKind,
+    CompletionItemLabelDetails, CompletionTriggerKind, InsertTextFormat,
+    InsertTextMode, Position,
 };
+use itertools::Itertools;
 
 #[cfg(feature = "full-compiler")]
-use yara_x::mods::reflect::FieldKind;
+use yara_x::mods::reflect::Type;
 #[cfg(feature = "full-compiler")]
 use yara_x::mods::{module_definition, module_names};
 use yara_x_parser::cst::{Immutable, Node, SyntaxKind, Token, CST};
@@ -75,6 +77,7 @@ const CONDITION_SUGGESTIONS: [(&str, Option<&str>); 16] = [
 pub fn completion(
     document: &Document,
     pos: Position,
+    context: Option<CompletionContext>,
 ) -> Option<Vec<CompletionItem>> {
     let cst = &document.cst;
     // Get the token before cursor. There might be no token at cursor when the
@@ -83,12 +86,28 @@ pub fn completion(
         .and_then(|token| token.prev_token())
         .or_else(|| cst.root().last_token())?;
 
+    // Trigger characters are: `.`, `!`, `$`, `@`, `#`.
+    let is_trigger_character = context.is_some_and(|ctx| {
+        ctx.trigger_kind == CompletionTriggerKind::TRIGGER_CHARACTER
+    });
+
     // If the token is a direct child of `SOURCE_FILE`, return top-level suggestions.
-    if non_error_parent(&token)?.kind() == SyntaxKind::SOURCE_FILE {
+    if !is_trigger_character
+        && non_error_parent(&token)?.kind() == SyntaxKind::SOURCE_FILE
+    {
         return Some(source_file_suggestions());
     }
 
     let prev_token = prev_non_trivia_token(&token)?;
+
+    if prev_token.ancestors().any(|n| n.kind() == SyntaxKind::CONDITION_BLK) {
+        return condition_suggestions(cst, token);
+    }
+
+    // Trigger characters are recognized in the condition block only.
+    if is_trigger_character {
+        return Some(vec![]);
+    }
 
     if prev_token.kind() == SyntaxKind::IMPORT_KW {
         #[cfg(feature = "full-compiler")]
@@ -101,10 +120,6 @@ pub fn completion(
         prev_token.ancestors().find(|n| n.kind() == SyntaxKind::PATTERN_DEF)
     {
         return Some(pattern_modifier_suggestions(pattern_def));
-    }
-
-    if prev_token.ancestors().any(|n| n.kind() == SyntaxKind::CONDITION_BLK) {
-        return condition_suggestions(cst, token);
     }
 
     if prev_token.ancestors().any(|n| n.kind() == SyntaxKind::RULE_DECL) {
@@ -191,6 +206,8 @@ fn condition_suggestions(
                 }
             }
         }
+        // Do not propose keywords for condition block after a dot.
+        SyntaxKind::DOT => {}
         _ => {
             CONDITION_SUGGESTIONS.iter().for_each(|(kw, insert)| {
                 result.push(CompletionItem {
@@ -351,28 +368,28 @@ fn module_suggestions(
     let definition = module_definition(module_name)?;
 
     // Traverse
-    let mut current_kind = FieldKind::Struct(definition);
+    let mut current_kind = Type::Struct(definition);
 
     for segment in path.iter().rev().skip(1) {
         match segment {
             Segment::Field(name) => {
                 match current_kind {
-                    FieldKind::Struct(struct_def) => {
+                    Type::Struct(struct_def) => {
                         // Find field
                         current_kind = struct_def
                             .fields()
                             .find(|field| field.name() == *name)?
-                            .kind();
+                            .ty();
                     }
                     _ => return None, // Cannot access field of non-struct
                 }
             }
             Segment::Index => {
                 match current_kind {
-                    FieldKind::Array(inner) => {
+                    Type::Array(inner) => {
                         current_kind = *inner;
                     }
-                    FieldKind::Map(_, value) => {
+                    Type::Map(_, value) => {
                         current_kind = *value;
                     }
                     _ => return None, // Cannot index non-array
@@ -381,25 +398,74 @@ fn module_suggestions(
         }
     }
 
-    // Now `current_kind` is the type of the expression before the cursor.
-    // We want to suggest fields if it is a Struct.
-    if let FieldKind::Struct(def) = current_kind {
-        let suggestions = def
-            .fields()
-            .map(|f| CompletionItem {
-                label: f.name().to_string(),
-                kind: Some(CompletionItemKind::FIELD),
-                label_details: Some(CompletionItemLabelDetails {
-                    description: Some(kind_to_string(&f.kind())),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            })
-            .collect();
-        return Some(suggestions);
-    }
+    let current_struct = match current_kind {
+        Type::Struct(s) => s,
+        _ => return None,
+    };
 
-    None
+    // Now `current_struct` is the structure before the cursor.
+    // We want to suggest fields for this structure.
+    let suggestions = current_struct
+        .fields()
+        .flat_map(|f| {
+            let name = f.name();
+            let ty = f.ty();
+
+            if let Type::Func(ref func_def) = ty {
+                func_def
+                    .signatures
+                    .iter()
+                    .map(|sig| {
+                        let arg_types = sig
+                            .args
+                            .iter()
+                            .map(ty_to_string)
+                            .collect::<Vec<_>>();
+
+                        let args_template = arg_types
+                            .iter()
+                            .enumerate()
+                            .map(|(n, arg_type)| {
+                                format!("${{{}:{arg_type}}}", n + 1)
+                            })
+                            .join(",");
+
+                        CompletionItem {
+                            label: format!(
+                                "{}({})",
+                                name,
+                                arg_types.join(", ")
+                            ),
+                            kind: Some(CompletionItemKind::METHOD),
+                            insert_text: Some(format!(
+                                "{name}({args_template})",
+                            )),
+                            insert_text_format: Some(
+                                InsertTextFormat::SNIPPET,
+                            ),
+                            label_details: Some(CompletionItemLabelDetails {
+                                description: Some(ty_to_string(&ty)),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }
+                    })
+                    .collect()
+            } else {
+                vec![CompletionItem {
+                    label: name.to_string(),
+                    kind: Some(CompletionItemKind::FIELD),
+                    label_details: Some(CompletionItemLabelDetails {
+                        description: Some(ty_to_string(&ty)),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }]
+            }
+        })
+        .collect();
+
+    Some(suggestions)
 }
 
 /// Given a token that must be a closing (right) bracket, find the
@@ -431,16 +497,18 @@ fn find_matching_left_bracket(
 }
 
 #[cfg(feature = "full-compiler")]
-fn kind_to_string(k: &FieldKind) -> String {
-    match k {
-        FieldKind::Integer => "integer".to_string(),
-        FieldKind::Float => "float".to_string(),
-        FieldKind::Bool => "bool".to_string(),
-        FieldKind::String => "string".to_string(),
-        FieldKind::Struct(_) => "struct".to_string(),
-        FieldKind::Array(inner) => format!("array<{}>", kind_to_string(inner)),
-        FieldKind::Map(key, value) => {
-            format!("map<{},{}>", kind_to_string(key), kind_to_string(value))
+fn ty_to_string(ty: &Type) -> String {
+    match ty {
+        Type::Integer => "integer".to_string(),
+        Type::Float => "float".to_string(),
+        Type::Bool => "bool".to_string(),
+        Type::String => "string".to_string(),
+        Type::Regexp => "regexp".to_string(),
+        Type::Struct(_) => "struct".to_string(),
+        Type::Func(_) => "func()".to_string(),
+        Type::Array(inner) => format!("array<{}>", ty_to_string(inner)),
+        Type::Map(key, value) => {
+            format!("map<{},{}>", ty_to_string(key), ty_to_string(value))
         }
     }
 }
