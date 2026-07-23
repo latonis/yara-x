@@ -1,5 +1,5 @@
-use crate::compiler::ir::{Expr, ExprId, Iterable, MatchAnchor, Quantifier};
 use crate::compiler::IR;
+use crate::compiler::ir::{Expr, ExprId, Iterable, MatchAnchor, Quantifier};
 
 /// Events yielded by [`DFSIter`].
 pub(crate) enum Event<T> {
@@ -300,6 +300,10 @@ pub(super) fn dfs_common(
         | Expr::IEquals { lhs, rhs }
         | Expr::Matches { lhs, rhs } => {
             stack.push(Event::Enter((*rhs, EventContext::None)));
+            stack.push(Event::Enter((*lhs, EventContext::None)));
+        }
+
+        Expr::MatchesMany { lhs, .. } => {
             stack.push(Event::Enter((*lhs, EventContext::None)));
         }
 
@@ -607,7 +611,7 @@ mod tests {
         let mut ir = IR::new();
 
         let mut var_stack = VarStack::new();
-        let mut var_frame = var_stack.new_frame(1);
+        let mut var_frame = var_stack.new_frame(1).unwrap();
 
         let const_1 = ir.constant(TypeValue::const_integer_from(2));
         let with_body = ir.constant(TypeValue::const_bool_from(true));

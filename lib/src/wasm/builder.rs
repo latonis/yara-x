@@ -2,9 +2,9 @@ use crate::compiler::RuleId;
 use crate::wasm;
 use rustc_hash::FxHashMap;
 use std::mem;
+use walrus::ValType::{F64, I32, I64};
 use walrus::ir::ExtendedLoad::ZeroExtend;
 use walrus::ir::{BinaryOp, Block, InstrSeqId, LoadKind, MemArg, UnaryOp};
-use walrus::ValType::{F64, I32, I64};
 use walrus::{
     FunctionBuilder, FunctionId, GlobalId, InstrSeqBuilder, MemoryId, Module,
 };
@@ -344,6 +344,15 @@ impl WasmModuleBuilder {
             self.main_func.finish(Vec::new(), &mut self.module.funcs);
 
         self.module.exports.add("main", main_func);
+
+        // WasmModuleBuilder::new adds to the WASM module all the functions
+        // that are labeled as #[wasm_export] or #[module_export]. However,
+        // not all the functions are used in the final WASM code because
+        // (ie: some YARA modules are not imported by the rules). This removes
+        // the functions that are not actually used, reducing the size of the
+        // compiled rules.
+        walrus::passes::gc::run(&mut self.module);
+
         self.module
     }
 }

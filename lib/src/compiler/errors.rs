@@ -34,6 +34,16 @@ impl InvalidWarningCode {
 /// Error returned while serializing/deserializing compiled rules.
 #[derive(Error, Debug)]
 pub enum SerializationError {
+    /// The data being deserialized was created with an incompatible version
+    /// of YARA-X.
+    #[error("incompatible version, expected {expected} got {actual}")]
+    InvalidVersion {
+        /// The expected version.
+        expected: u32,
+        /// The actual version found in the file.
+        actual: u32,
+    },
+
     /// The data being deserialized doesn't contain YARA-X serialized rules.
     #[error("not a YARA-X compiled rules file")]
     InvalidFormat,
@@ -99,6 +109,7 @@ pub enum CompileError {
     SlowPattern(Box<SlowPattern>),
     SyntaxError(Box<SyntaxError>),
     TooManyPatterns(Box<TooManyPatterns>),
+    TooManyVariables(Box<TooManyVariables>),
     UnexpectedEscapeSequence(Box<UnexpectedEscapeSequence>),
     UnexpectedNegativeNumber(Box<UnexpectedNegativeNumber>),
     UnknownField(Box<UnknownField>),
@@ -642,7 +653,7 @@ pub struct InvalidModifier {
 #[associated_enum(CompileError)]
 #[error(code = "E034", title = "potentially slow loop")]
 #[label(
-"this range can be very large",
+    "this range can be very large",
     loc
 )]
 pub struct PotentiallySlowLoop {
@@ -940,6 +951,16 @@ pub struct CircularIncludes {
     report: Report,
     error_loc: CodeLoc,
     note: Option<String>,
+}
+
+/// Maximum number of local variables exceeded.
+#[derive(ErrorStruct, Clone, Debug, PartialEq, Eq)]
+#[associated_enum(CompileError)]
+#[error(code = "E047", title = "too many variables")]
+#[label("too many local variables", error_loc)]
+pub struct TooManyVariables {
+    report: Report,
+    error_loc: CodeLoc,
 }
 
 /// A custom error has occurred.

@@ -45,12 +45,14 @@ assert_eq!(results.matching_rules().len(), 1);
 #![cfg_attr(docsrs, feature(doc_cfg))]
 extern crate core;
 
-pub use compiler::compile;
 pub use compiler::Compiler;
+pub use compiler::IgnoredRuleReason;
+pub use compiler::IgnoredRules;
 pub use compiler::Patch;
 pub use compiler::Rules;
 pub use compiler::RulesIter;
 pub use compiler::SourceCode;
+pub use compiler::compile;
 pub use models::Match;
 pub use models::Matches;
 pub use models::MetaValue;
@@ -60,7 +62,6 @@ pub use models::PatternKind;
 pub use models::Patterns;
 pub use models::Rule;
 pub use modules::mods;
-pub use scanner::blocks;
 pub use scanner::MatchingRules;
 pub use scanner::ModuleOutputs;
 pub use scanner::NonMatchingRules;
@@ -70,6 +71,7 @@ pub use scanner::ScanError;
 pub use scanner::ScanOptions;
 pub use scanner::ScanResults;
 pub use scanner::Scanner;
+pub use scanner::blocks;
 pub use variables::Variable;
 
 mod compiler;
@@ -78,6 +80,7 @@ mod re;
 mod scanner;
 mod string_pool;
 mod symbols;
+mod teddy;
 mod types;
 mod variables;
 mod wasm;
@@ -173,5 +176,37 @@ mod utils {
 ///
 /// [wasmtime]: https://wasmtime.dev/
 pub unsafe fn finalize() {
-    wasm::free_engine();
+    unsafe {
+        wasm::free_engine();
+    }
 }
+
+#[cfg(feature = "stderr-logs")]
+/// Initializes the `env_logger` backend for logging output to stdout/stderr.
+///
+/// This function is called automatically when creating a [`Compiler`] or
+/// [`Scanner`] if the `stderr-logs` feature is enabled. It uses
+/// `env_logger::try_init()`, which reads the `YRX_LOG` environment variable
+/// and safely ignores initialization if a logger was already registered.
+pub(crate) fn init_logger() {
+    static INIT_LOGGER: std::sync::Once = std::sync::Once::new();
+    INIT_LOGGER.call_once(|| {
+        let mut builder = env_logger::Builder::from_env("YRX_LOG");
+
+        for noisy_module in [
+            "cranelift_codegen",
+            "cranelift_frontend",
+            "wasmtime",
+            "wasmtime_internal_cranelift",
+            "walrus",
+        ] {
+            builder.filter_module(noisy_module, log::LevelFilter::Info);
+        }
+
+        let _ = builder.try_init();
+    });
+}
+
+#[cfg(not(feature = "stderr-logs"))]
+#[inline]
+pub(crate) fn init_logger() {}

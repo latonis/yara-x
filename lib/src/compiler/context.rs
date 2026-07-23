@@ -4,15 +4,15 @@ use std::rc::Rc;
 use itertools::Itertools;
 use rustc_hash::FxHashSet;
 
-use yara_x_parser::ast::{Ident, WithSpan};
 use yara_x_parser::Span;
+use yara_x_parser::ast::{Ident, WithSpan};
 
 use crate::compiler::errors::{CompileError, UnknownPattern};
-use crate::compiler::ir::{PatternIdx, IR};
+use crate::compiler::ir::{IR, PatternIdx};
 use crate::compiler::report::ReportBuilder;
-use crate::compiler::{ir, Warnings};
+use crate::compiler::{RegexId, RegexSetId, Warnings, ir};
 use crate::errors::{UnknownField, UnknownIdentifier};
-use crate::modules::BUILTIN_MODULES;
+use crate::string_pool::StringPool;
 use crate::symbols::{StackedSymbolTable, Symbol, SymbolLookup};
 use crate::types::Type;
 use crate::wasm;
@@ -65,6 +65,12 @@ pub(crate) struct CompileContext<'a, 'src> {
     /// Tracks the product of iteration counts of nested loops.
     /// Used to detect loops that may iterate an excessive number of times.
     pub loop_iteration_multiplier: i64,
+
+    /// Grouped RegexSets constructed during IR creation for or-expressions.
+    pub regex_sets: &'a mut rustc_hash::FxHashMap<RegexSetId, Vec<RegexId>>,
+
+    /// Pool for regular expressions.
+    pub regex_pool: &'a mut StringPool<RegexId>,
 }
 
 impl<'src> CompileContext<'_, 'src> {
@@ -80,13 +86,15 @@ impl<'src> CompileContext<'_, 'src> {
         ident: &Ident,
     ) -> Result<(PatternIdx, &mut ir::PatternInRule<'src>), CompileError> {
         // Make sure that identifier starts with `$`, `#`, `@` or `!`.
-        debug_assert!("$#@!".contains(
-            ident
-                .name
-                .chars()
-                .next()
-                .expect("identifier must be at least 1 character long")
-        ));
+        debug_assert!(
+            "$#@!".contains(
+                ident
+                    .name
+                    .chars()
+                    .next()
+                    .expect("identifier must be at least 1 character long")
+            )
+        );
 
         self.current_rule_patterns
             .iter_mut()
@@ -119,6 +127,7 @@ impl<'src> CompileContext<'_, 'src> {
             // If the current symbol table is `None` it means that the
             // identifier is not a field or method of some structure.
             return if symbol_table.is_none() {
+                let module = crate::modules::module_by_name(ident.name);
                 // Build the error for the unknown identifier.
                 let mut err = UnknownIdentifier::build(
                     self.report_builder,
@@ -126,19 +135,16 @@ impl<'src> CompileContext<'_, 'src> {
                     self.report_builder.span_to_code_loc(ident.span()),
                     // Add a note about the missing import statement if
                     // the unknown identifier is a module name.
-                    if BUILTIN_MODULES.contains_key(ident.name) {
-                        Some(format!(
+                    module.map(|m| {
+                        format!(
                             "there is a module named `{}`, but the `import \"{}\"` statement is missing",
-                            ident.name,
-                            ident.name
-                        ))
-                    } else {
-                        None
-                    },
+                            m.name(), m.name())
+                        }
+                    )
                 );
                 // If the identifier is a known module, add a fix that inserts
                 // the import statement at the beginning of the file.
-                if BUILTIN_MODULES.contains_key(ident.name) {
+                if module.is_some() {
                     err.report_mut().patch(
                         self.report_builder.span_to_code_loc(Span(0..0)),
                         format!("import \"{}\"\n", ident.name),
@@ -198,17 +204,20 @@ impl VarStack {
     ///
     /// Each stack frame has its own frame ID, which its unique among all
     /// the frames returned by this function.
-    pub fn new_frame(&mut self, capacity: i32) -> VarStackFrame {
-        let start = self.used;
-
-        self.used += capacity;
-        self.frame_id += 1;
-
-        if self.used > wasm::MAX_VARS {
-            panic!("variables stack overflow");
+    pub fn new_frame(&mut self, capacity: i32) -> Option<VarStackFrame> {
+        let new_used = self.used.checked_add(capacity)?;
+        if new_used > wasm::MAX_VARS {
+            return None;
         }
-
-        VarStackFrame { frame_id: self.frame_id, start, capacity, used: 0 }
+        let start = self.used;
+        self.used = new_used;
+        self.frame_id += 1;
+        Some(VarStackFrame {
+            frame_id: self.frame_id,
+            start,
+            capacity,
+            used: 0,
+        })
     }
 
     /// Unwinds the stack freeing all frames that were allocated after the
@@ -250,7 +259,7 @@ impl VarStackFrame {
         }
         let index = self.used + self.start;
         self.used += 1;
-        Var { frame_id: self.frame_id, ty, index }
+        Var::new(self.frame_id, ty, index)
     }
 }
 
@@ -272,6 +281,9 @@ pub(crate) struct Var {
 
 impl Var {
     pub fn new(frame_id: usize, ty: Type, index: i32) -> Self {
+        if index >= wasm::MAX_VARS {
+            panic!("variable index out of bounds");
+        }
         Self { frame_id, ty, index }
     }
 
