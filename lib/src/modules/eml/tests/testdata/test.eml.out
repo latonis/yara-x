@@ -8,4 +8,4 @@ headers:
     value: "test"
   - key: "Date"
     value: "Sun, 8 Jan 2017 20:37:44 +0200"
-body: "Hello world!"
+body: "Hello world!\n"

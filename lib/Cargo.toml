@@ -205,7 +205,9 @@ elf-module = [
 ]
 
 # The `eml` module parses EML files.
-eml-module = []
+eml-module = [
+    "dep:quoted_printable"
+]
 
 # The `hash` module provides functions for computing md5, sha1, sha-256,
 # crc32 and checksum.
@@ -363,6 +365,7 @@ p256 = { workspace = true, optional = true, features = ["ecdsa"] }
 protobuf = { workspace = true }
 psl = { workspace = true, optional = true }
 quanta = { workspace = true, optional = true }
+quoted_printable = { workspace = true, optional = true }
 rustc-hash = { workspace = true }
 regex = { workspace = true }
 regex-syntax = { workspace = true }
