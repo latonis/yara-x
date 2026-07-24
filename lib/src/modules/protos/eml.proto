@@ -6,7 +6,6 @@ package eml;
 option (yara.module_options) = {
   name : "eml"
   root_message: "eml.Eml"
-  rust_module: "eml"
   cargo_feature: "eml-module"
 };
 
