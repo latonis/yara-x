@@ -1,4 +1,4 @@
-use std::mem;
+use std::{collections::HashMap, mem};
 
 use crate::modules::protos::eml::{Eml, EmlPart, Header};
 use base64::prelude::*;

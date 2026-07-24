@@ -794,8 +794,8 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     eaders\x12\x12\n\x04body\x18\x02\x20\x02(\x0cR\x04body\x12!\n\x0cdecoded\
     _body\x18\x03\x20\x01(\x0cR\x0bdecodedBody\"0\n\x06Header\x12\x10\n\x03k\
     ey\x18\x01\x20\x02(\x0cR\x03key\x12\x14\n\x05value\x18\x02\x20\x02(\x0cR\
-    \x05valueB#\xfa\x92\x19\x1f\n\x03eml\x12\x07eml.Eml\x1a\x03eml\"\neml-mo\
-    duleb\x06proto2\
+    \x05valueB\x1e\xfa\x92\x19\x1a\n\x03eml\x12\x07eml.Eml\x1a\neml-moduleb\
+    \x06proto2\
 ";
 
 /// `FileDescriptorProto` object which was a source for this generated file

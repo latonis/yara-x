@@ -5,12 +5,11 @@ An EML file is the standard file format for email, according to RFC 2045 [1]
 [1]: https://datatracker.ietf.org/doc/html/rfc2045
  */
 
-use crate::modules::prelude::*;
+use crate::mods::prelude::*;
 use crate::modules::protos::eml::*;
 pub mod parser;
 
-#[module_main]
-fn main(data: &[u8], _meta: Option<&[u8]>) -> Result<Eml, ModuleError> {
+fn main(_ctx: &mut ModuleContext, data: &[u8]) -> Result<Eml, ModuleError> {
     match parser::EmlParser::new().parse(data) {
         Ok(eml) => Ok(eml),
         Err(_) => {
@@ -20,3 +19,5 @@ fn main(data: &[u8], _meta: Option<&[u8]>) -> Result<Eml, ModuleError> {
         }
     }
 }
+
+register_module!("eml", Eml, main);
