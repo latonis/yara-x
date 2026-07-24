@@ -42,23 +42,24 @@ impl EmlParser {
             }
 
             let (header, body) = self.split_message(current_data);
-            let headers = self.parse_headers(header);
+            let (headers, lookup) = self.parse_headers(header);
 
             if is_root {
                 self.result.headers = self.map_to_proto_headers(&headers);
                 self.result.body = Some(body.to_vec());
-                self.result.decoded_body = self.decode_body(&headers, body);
+                self.result.decoded_body = self.decode_body(&lookup, body);
             }
 
             // Content-Type should be checked for multipart and boundary
             let mut found_boundary = None;
-            if let Some(content_type) = headers.get(&b"Content-Type"[..]) {
+            if let Some(content_type) = lookup.get(b"content-type".as_ref()) {
+                let ct = content_type.as_slice();
                 // check if starts with multipart/
-                if content_type.starts_with(b"multipart/") {
-                    if let Some(pos) = content_type.find("boundary=") {
+                if ct.starts_with(b"multipart/") {
+                    if let Some(pos) = ct.find("boundary=") {
                         // if so, find pos of boundary=
                         let start = pos + "boundary=".len();
-                        let remainder = content_type[start..].trim();
+                        let remainder = ct[start..].trim();
 
                         // value could be "value" or value
                         let boundary_bytes = if remainder.starts_with(b"\"") {
@@ -66,11 +67,7 @@ impl EmlParser {
                             remainder.split_str("\"").nth(1).unwrap_or(&[])
                         } else {
                             // no quotes but may be multiple items in here, split and grab 0th
-                            remainder
-                                .split_str(";")
-                                .next()
-                                .unwrap_or(&[])
-                                .trim()
+                            remainder.split_str(";").next().unwrap_or(&[]).trim()
                         };
 
                         if !boundary_bytes.is_empty() {
@@ -96,7 +93,7 @@ impl EmlParser {
                 self.result.parts.push(EmlPart {
                     headers: self.map_to_proto_headers(&headers),
                     body: Some(body.to_vec()),
-                    decoded_body: self.decode_body(&headers, body),
+                    decoded_body: self.decode_body(&lookup, body),
                     ..Default::default()
                 });
             }
@@ -118,30 +115,21 @@ impl EmlParser {
 
     fn decode_body(
         &self,
-        headers: &IndexMap<&[u8], Vec<u8>>,
+        lookup: &HashMap<Vec<u8>, Vec<u8>>,
         body: &[u8],
     ) -> Option<Vec<u8>> {
-        let content_encoding =
-            headers.get(&b"Content-Transfer-Encoding"[..])?;
-
-        if content_encoding == &b"base64"[..] {
-            let cleaned_body: Vec<u8> = body
-                .iter()
-                .filter(|&&b| !b.is_ascii_whitespace())
-                .cloned()
-                .collect();
-
-            return BASE64_STANDARD.decode(cleaned_body).ok();
+        let enc = lookup.get(b"content-transfer-encoding".as_ref())?;
+        match enc.to_ascii_lowercase().as_slice() {
+            b"base64" => {
+                let cleaned: Vec<u8> =
+                    body.iter().filter(|&&b| !b.is_ascii_whitespace()).cloned().collect();
+                BASE64_STANDARD.decode(cleaned).ok()
+            }
+            b"quoted-printable" => {
+                quoted_printable::decode(body, quoted_printable::ParseMode::Robust).ok()
+            }
+            _ => None,
         }
-
-        if content_encoding == &b"Quoted-Printable"[..] {
-            return quoted_printable::decode(
-                body,
-                quoted_printable::ParseMode::Robust,
-            )
-            .ok();
-        }
-        None
     }
 
     fn map_to_proto_headers(
@@ -161,29 +149,32 @@ impl EmlParser {
     fn parse_headers<'a>(
         &self,
         headers_raw: &'a [u8],
-    ) -> IndexMap<&'a [u8], Vec<u8>> {
+    ) -> (IndexMap<&'a [u8], Vec<u8>>, HashMap<Vec<u8>, Vec<u8>>) {
         let mut last_key: Option<&[u8]> = None;
-        let mut headers = IndexMap::<&[u8], Vec<u8>>::new();
+        let mut ordered = IndexMap::<&[u8], Vec<u8>>::new();
+        let mut lookup = HashMap::<Vec<u8>, Vec<u8>>::new();
 
         for line in headers_raw.lines() {
             if line.starts_with(b" ") || line.starts_with(b"\t") {
-                // multiline value
-                // we need to append to the previous value here
-                if let Some(last_key) = last_key {
-                    if let Some(value) = headers.get_mut(last_key) {
-                        value.push(b' ');
-                        value.extend_from_slice(line.trim());
+                if let Some(k) = last_key {
+                    if let Some(v) = ordered.get_mut(k) {
+                        v.push(b' ');
+                        v.extend_from_slice(line.trim());
+                    }
+                    if let Some(v) = lookup.get_mut(&k.to_ascii_lowercase()) {
+                        v.push(b' ');
+                        v.extend_from_slice(line.trim());
                     }
                 }
             } else if let Some((key, value)) = line.split_once_str(":") {
-                // new key:value pair
-                let key_trimmed = key.trim();
-
-                headers.insert(key_trimmed, value.trim().to_vec());
-                last_key = Some(key_trimmed);
+                let key = key.trim();
+                let value = value.trim().to_vec();
+                ordered.insert(key, value.clone());
+                lookup.insert(key.to_ascii_lowercase(), value);
+                last_key = Some(key);
             }
         }
 
-        headers
+        (ordered, lookup)
     }
 }
